@@ -1,0 +1,21 @@
+name: CI — Philips Labs Runner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run on EC2 spot runner
+    runs-on: [self-hosted, ec2, spot]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify runner environment
+        run: |
+          echo "Hostname: $(hostname)"
+          echo "OS: $(uname -a)"
+          echo "Runner: $RUNNER_NAME"
+          echo "Labels: $RUNNER_LABELS"
+          df -h
+          free -m

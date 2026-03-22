@@ -1,0 +1,15 @@
+*.pem
+*.key
+.env
+MY_NOTES.md
+MY_NOTES.txt
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfplan
+terraform/tfplan
+terraform/*.backup
+
+# Lambda zips
+*.zip

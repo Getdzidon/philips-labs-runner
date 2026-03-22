@@ -1,0 +1,69 @@
+name: Deploy Philips Labs Runner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/deploy-runner.yaml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action to run"
+        required: true
+        default: "apply"
+        type: choice
+        options: [apply, destroy]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_VAR_github_app_id: ${{ secrets.GH_APP_ID }}
+  TF_VAR_github_app_key_base64: ${{ secrets.GH_APP_KEY_BASE64 }}
+  TF_VAR_github_app_webhook_secret: ${{ secrets.GH_APP_WEBHOOK_SECRET }}
+
+jobs:
+  terraform:
+    name: Terraform ${{ github.event.inputs.action || 'apply' }}
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.12.1"
+
+      - name: Authenticate to AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Terraform destroy
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: terraform destroy -auto-approve
+
+      - name: Print outputs
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        run: terraform output
