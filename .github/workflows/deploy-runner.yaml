@@ -47,6 +47,9 @@ jobs:
           role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Terraform init
+        run: terraform init
+
       - name: Download Lambda zip files
         run: |
           MODULE_VERSION="v6.1.0"
@@ -60,9 +63,6 @@ jobs:
               "https://github.com/philips-labs/terraform-aws-github-runner/releases/download/${MODULE_VERSION}/${LAMBDAS[$i]}.zip"
             echo "Downloaded ${LAMBDAS[$i]}.zip"
           done
-
-      - name: Terraform init
-        run: terraform init
 
       - name: Terraform validate
         run: terraform validate
