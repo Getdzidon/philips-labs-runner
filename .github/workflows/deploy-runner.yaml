@@ -50,6 +50,20 @@ jobs:
       - name: Terraform init
         run: terraform init
 
+      - name: Download Lambda zip files
+        run: |
+          MODULE_VERSION="v6.1.0"
+          LAMBDA_DIR=".terraform/modules/runners/lambdas/functions"
+          LAMBDAS=("webhook" "runners" "runner-binaries-syncer" "ami-housekeeper" "termination-watcher")
+          DIRS=("webhook" "control-plane" "gh-agent-syncer" "ami-housekeeper" "termination-watcher")
+
+          for i in "${!LAMBDAS[@]}"; do
+            mkdir -p "${LAMBDA_DIR}/${DIRS[$i]}"
+            curl -fsSL -o "${LAMBDA_DIR}/${DIRS[$i]}/${LAMBDAS[$i]}.zip" \
+              "https://github.com/philips-labs/terraform-aws-github-runner/releases/download/${MODULE_VERSION}/${LAMBDAS[$i]}.zip"
+            echo "Downloaded ${LAMBDAS[$i]}.zip"
+          done
+
       - name: Terraform validate
         run: terraform validate
 
