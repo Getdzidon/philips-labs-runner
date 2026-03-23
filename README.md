@@ -39,12 +39,41 @@ GitHub webhook event (workflow_queued)
 
 **Key components created by the module:**
 - API Gateway — receives GitHub webhook events
-- Lambda functions — webhook handler, scale-up, scale-down, binary syncer, AMI housekeeper, termination watcher
 - SQS queues — job queue with dead-letter queue
 - EC2 launch template — spot instances with encrypted EBS
-- SSM parameters — runner configuration and tokens
+- S3 bucket — stores GitHub runner agent binaries (downloaded by the syncer Lambda)
 - IAM roles — least-privilege for Lambdas and EC2 instances
 - CloudWatch log groups — Lambda and runner logs
+
+**Lambda functions** (all created and managed by the module):
+- **gh-runners-webhook** — receives GitHub webhook events from API Gateway, validates the webhook secret, and puts the job on the SQS queue
+- **gh-runners-scale-up** — picks up messages from SQS and launches EC2 spot instances as runners
+- **gh-runners-scale-down** — runs every 5 minutes, terminates idle or stale instances
+- **gh-runners-dispatch-to-runner** — routes queued workflow jobs to the correct runner configuration
+- **gh-runners-syncer** — periodically downloads the latest GitHub Actions runner agent from GitHub and stores it in S3 so instances don't download it directly at boot
+- **gh-runners-ami-housekeeper** — cleans up old AMIs older than the configured retention period (default 14 days)
+- **gh-runners-ssm-housekeeper** — cleans up orphaned SSM parameters left behind by terminated runner instances
+- **gh-runners-spot-termination-handler** — handles EC2 spot interruptions by gracefully draining the runner before termination
+- **gh-runners-spot-termination-notification** — monitors EventBridge for spot interruption warnings and triggers the termination handler
+
+**SSM parameters** (created under `/github-action-runners/gh-runners/`):
+
+*App secrets (SecureString, encrypted with KMS):*
+- **app/github_app_id** — GitHub App ID, read by Lambdas to authenticate with GitHub
+- **app/github_app_key_base64** — base64-encoded private key, used by Lambdas to generate installation tokens
+- **app/github_app_webhook_secret** — used by the webhook Lambda to validate incoming events
+
+*Runner configuration (String):*
+- **runners/config/agent_mode** — runner agent mode (ephemeral or persistent)
+- **runners/config/enable_cloudwatch** — whether CloudWatch agent is enabled on runner instances
+- **runners/config/cloudwatch_agent_config_runner** — CloudWatch agent configuration for runner logs
+- **runners/config/enable_jit_config** — whether just-in-time runner configuration is enabled
+- **runners/config/run_as** — the OS user the runner agent runs as (e.g. `ec2-user`)
+- **runners/config/token_path** — SSM path where runner registration tokens are stored
+- **runners/config/disable_default_labels** — whether to disable default GitHub runner labels
+
+*Webhook routing (String):*
+- **webhook/runner-matcher-config** — maps workflow labels to runner configurations so the webhook Lambda knows which runner group should handle each job
 
 ---
 
