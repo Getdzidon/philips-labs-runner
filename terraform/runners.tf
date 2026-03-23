@@ -72,6 +72,10 @@ module "runners" {
     enable = true
   }
 
+  # Disable reserved concurrency (account Lambda quota is only 10)
+  scale_up_reserved_concurrent_executions   = -1
+  pool_lambda_reserved_concurrent_executions = -1
+
   # Log retention
   logging_retention_in_days = 30
 
