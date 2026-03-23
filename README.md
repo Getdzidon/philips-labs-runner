@@ -270,7 +270,17 @@ aws ec2 describe-instances \
 
 ## Using the runners in other repositories
 
-Any repository in your organization can use these runners (the GitHub App must be installed at the org level):
+> **Org vs personal account:** The `enable_organization_runners` variable in `terraform.tfvars` controls whether runners register at the organization level or repository level. Organization runners require a GitHub **organization** account — personal accounts (e.g. `github.com/username`) must set this to `false`. If set to `true` on a personal account, the scale-up Lambda will silently ignore webhook events and runners will never start.
+
+**Repo-level runners** (`enable_organization_runners = false`):
+- Runners are registered to the repo where the GitHub App is installed
+- Only workflows in that repo can use them
+- Install the GitHub App on each repo that needs runners
+
+**Org-level runners** (`enable_organization_runners = true`):
+- Runners are registered at the organization level
+- Any repo in the org can use them (if the GitHub App has access)
+- Requires a GitHub organization account
 
 ```yaml
 jobs:
@@ -386,6 +396,7 @@ Check the webhook Lambda CloudWatch logs:
 aws logs tail /aws/lambda/gh-runners-webhook --follow
 ```
 Most common causes:
+- `enable_organization_runners = true` on a personal account — set to `false` (see "Using the runners" section above)
 - The GitHub App webhook URL does not match the API Gateway endpoint
 - The webhook secret does not match between GitHub App and Terraform
 - The GitHub App is not installed on the target repository

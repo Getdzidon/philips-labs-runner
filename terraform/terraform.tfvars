@@ -3,7 +3,7 @@ environment                 = "gh-runners"
 vpc_cidr                    = "10.1.0.0/16"
 instance_types              = ["t3.medium", "t3.large"]
 runners_maximum_count       = 5
-enable_organization_runners = true
+enable_organization_runners = false
 runner_extra_labels         = ["ec2", "spot"]
 
 # Sensitive values — pass via TF_VAR_* environment variables or -var flag:
