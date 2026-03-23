@@ -82,6 +82,15 @@ module "runners" {
   tags = {
     Project = "philips-labs-runner"
   }
+
+  # # Custom AMI — uncomment to use a pre-built AMI instead of the default
+  # # Build with: packer build -var 'region=eu-central-1' github_agent.linux.pkr.hcl
+  # ami_filter = {
+  #   name  = ["github-runner-al2023-x86_64-*"]
+  #   state = ["available"]
+  # }
+  # ami_owners        = ["4*********"]
+  # enable_userdata   = false
 }
 
 # Configure the GitHub App webhook to point to the API Gateway

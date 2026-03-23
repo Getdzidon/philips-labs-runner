@@ -341,6 +341,136 @@ jobs:
 
 To change limits, edit `terraform/runners.tf` or `terraform/terraform.tfvars` and push to `main`.
 
+### Ephemeral runners
+
+`enable_ephemeral_runners = true` means each EC2 instance handles exactly one job and terminates immediately after. This ensures:
+- No state leakage between jobs (clean environment every time)
+- No stale runners sitting idle after a job completes
+- Scale to zero when no jobs are queued
+
+The tradeoff is **startup time** — each job triggers a cold boot of a new EC2 instance (2-3 minutes) unlike GitHub-hosted runners (pre-warmed, instant) or ARC on Kubernetes (pod scheduling, seconds). This is the fundamental difference with EC2-based runners.
+
+### Warm pool (idle runners)
+
+The `idle_config` setting pre-warms idle runner instances on a cron schedule so jobs during those hours get picked up instantly without waiting for a cold boot:
+
+```hcl
+idle_config = [{
+  cron      = "* * 8-18 * * 1-5"   # Mon-Fri, 8am-6pm UTC
+  timeZone  = "UTC"
+  idleCount = 1                      # Keep 1 idle runner ready
+}]
+```
+
+- **Inside the cron window** — 1 idle instance stays running and picks up jobs instantly. If it handles a job and terminates (ephemeral), a new idle instance is created to maintain the count
+- **Outside the cron window** — no idle instances. Jobs trigger a cold boot (2-3 minutes)
+- **Cost impact** — an idle `t3.medium` spot instance costs ~$0.013/hr. Keeping 1 warm for 10 hours/day × 5 days = ~$2.80/month
+
+To adjust, change the cron expression, time zone, or idle count in `terraform/runners.tf`.
+
+### Custom AMI (reduce startup time)
+
+The default Amazon Linux AMI installs the GitHub Actions runner agent and dependencies at boot, which adds to startup time. Building a custom AMI with pre-installed tools reduces cold boot from ~3 minutes to ~1 minute.
+
+**How it works:**
+1. Packer launches a temporary EC2 instance from a base Amazon Linux 2023 AMI
+2. Runs provisioning scripts that install packages, the GitHub runner agent, and any custom tools you specify
+3. Creates a snapshot of the instance as a new AMI stored in your AWS account's AMI registry
+4. Terminates the temporary instance
+5. The AMI name follows the format `github-runner-al2023-x86_64-YYYYMMDDhhmm` — the timestamp suffix is why the `ami_filter` uses a `*` wildcard to always match the latest build
+
+When the module launches a runner, it uses `ami_filter` to find the most recent AMI matching the pattern, so you can rebuild the AMI anytime and runners will automatically use the latest version.
+
+**Install Packer:**
+
+```bash
+# Windows (Chocolatey)
+choco install packer
+
+# Windows (Scoop)
+scoop install packer
+
+# Windows (manual) — download from https://developer.hashicorp.com/packer/install
+# Extract packer.exe and add to PATH
+
+# macOS (Homebrew)
+brew install packer
+
+# Linux (Ubuntu/Debian)
+wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt update && sudo apt install packer
+
+# Linux (Amazon Linux / RHEL)
+sudo yum install -y yum-utils
+sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+sudo yum install -y packer
+
+# Verify
+packer version
+```
+
+**AWS credentials:**
+
+Packer uses your local AWS credentials to launch a temporary EC2 instance, create the AMI, and terminate the instance. Ensure you have AWS CLI installed and configured:
+
+```bash
+# Configure credentials (if not already done)
+aws configure
+
+# Verify access
+aws sts get-caller-identity
+```
+
+**Build the AMI:**
+
+```bash
+# Clone the module repo
+git clone https://github.com/philips-labs/terraform-aws-github-runner.git
+cd terraform-aws-github-runner/images/linux-al2023
+
+# Initialize Packer plugins
+packer init .
+
+# Validate the template
+packer validate .
+
+# Build the AMI (takes ~5-10 minutes)
+packer build -var 'region=eu-central-1' github_agent.linux.pkr.hcl
+```
+
+**Pre-install custom tools:**
+
+The Packer template has a `custom_shell_commands` variable. Pass additional install commands to bake tools into the AMI:
+
+```bash
+packer build \
+  -var 'region=eu-central-1' \
+  -var 'custom_shell_commands=["sudo dnf install -y nodejs npm", "sudo dnf install -y python3 python3-pip", "sudo pip3 install awscli"]' \
+  github_agent.linux.pkr.hcl
+```
+
+The base template already installs: `docker`, `jq`, `git`, `amazon-cloudwatch-agent`, and the GitHub Actions runner agent. Add any tools your workflows need (Node.js, Python, Go, build tools, etc.) via `custom_shell_commands`.
+
+**Reference the AMI in `runners.tf`:**
+
+The following block is commented out in `runners.tf`. Uncomment it after building your custom AMI:
+
+```hcl
+# # Custom AMI — uncomment to use a pre-built AMI instead of the default
+# # Build with: packer build -var 'region=eu-central-1' github_agent.linux.pkr.hcl
+# ami_filter = {
+#   name  = ["github-runner-al2023-x86_64-*"]
+#   state = ["available"]
+# }
+# ami_owners = ["<YOUR_ACCOUNT_ID>"]
+# enable_userdata = false
+```
+
+> `enable_userdata = false` is required when using a custom AMI — the AMI already has the runner agent and start script baked in, so the user-data bootstrap is skipped.
+
+> The `enable_ami_housekeeper = true` setting automatically cleans up AMIs older than 14 days, so old custom AMIs don't accumulate.
+
 ---
 
 ## Features
@@ -414,7 +544,23 @@ The module uses multiple instance types for diversity. If you see `InsufficientI
 
 Default boot time allowance is 5 minutes. If runners time out before registering:
 - Increase via `runner_boot_time_in_minutes` in `runners.tf`
-- Consider building a custom AMI with pre-installed dependencies to reduce boot time
+- Build a custom AMI with pre-installed dependencies (see "Custom AMI" section above)
+
+**SSM parameter exceeds 4096 character limit**
+
+The scale-up Lambda writes runner tokens to SSM at runtime. If your account uses Standard tier (4096 char limit), this can fail. Set the account-level default to Advanced tier:
+```bash
+aws ssm update-service-setting \
+  --setting-id "arn:aws:ssm:<REGION>:<ACCOUNT_ID>:servicesetting/ssm/parameter-store/default-parameter-tier" \
+  --setting-value "Advanced"
+```
+Advanced tier costs $0.05/parameter/month.
+
+**Lambda concurrency error (UnreservedConcurrentExecution below minimum)**
+
+New AWS accounts have a low Lambda concurrency quota (as low as 10). The module reserves concurrency per Lambda, which can exceed the limit. Either:
+- Request a quota increase in AWS Service Quotas → Lambda → Concurrent executions
+- Set `scale_up_reserved_concurrent_executions = -1` and `pool_lambda_reserved_concurrent_executions = -1` in `runners.tf` to disable reserved concurrency
 
 **Webhook returns 401/403**
 
