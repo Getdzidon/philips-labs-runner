@@ -64,6 +64,10 @@ jobs:
             echo "Downloaded ${LAMBDAS[$i]}.zip"
           done
 
+      - name: Debug secret length
+        run: |
+          echo "Key length: ${#TF_VAR_github_app_key_base64}"
+
       - name: Terraform validate
         run: terraform validate
 
